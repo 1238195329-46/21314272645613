@@ -344,28 +344,57 @@
                 const d = await getSource();
                 
                 window.Module = {
-                    INITIAL_MEMORY: 268435456,
-                    ALLOW_MEMORY_GROWTH: 1,
-                    canvas: canvas,
-                    printErr: console.error,
-                    arguments: ["game.love"],
-                    
-                    preRun: [function() {
-                        Module.addRunDependency("fp game.love");
-                        Module.FS_createDataFile('/', "game.love", d, true, true, true);
-                        Module.removeRunDependency("fp game.love");
-                    }],
-                    
-                    postRun: [function() {
-                        saveManager.load('auto').then(data => {
-                            if (data) setTimeout(() => saveManager.restoreGameState(data), 500);
-                        });
-                        saveManager.startAutoSave();
-                        document.getElementById('save-controls').style.display = 'block';
-                        loader.classList.add('hidden');
-                        canvas.style.display = 'block';
-                    }]
-                };
+    INITIAL_MEMORY: 268435456,
+    ALLOW_MEMORY_GROWTH: 1,
+    canvas: canvas,
+    printErr: console.error,
+    arguments: ["game.love"],
+    
+    preRun: [async function() {
+        Module.addRunDependency("fp game.love");
+        
+        // Create the game.love file
+        Module.FS_createDataFile('/', "game.love", d, true, true, true);
+        
+        // NOW restore save files BEFORE game starts
+        const saveData = await saveManager.load('auto');
+        if (saveData) {
+            console.log('Restoring save files...', Object.keys(saveData));
+            try {
+                const saveDir = '/home/web_user/.local/share/love/game/save';
+                try { Module.FS.mkdirTree(saveDir); } catch (e) {}
+                
+                for (const [name, content] of Object.entries(saveData)) {
+                    const path = saveDir + '/' + name;
+                    Module.FS.writeFile(path, new Uint8Array(content));
+                    console.log('Restored:', name, 'Size:', content.length);
+                }
+                console.log('Save files restored successfully');
+            } catch (err) {
+                console.error('Restore failed:', err);
+            }
+        } else {
+            console.log('No save data found');
+        }
+        
+        Module.removeRunDependency("fp game.love");
+    }],
+    
+    postRun: [function() {
+        // Start autosave after game is running
+        saveManager.startAutoSave();
+        document.getElementById('save-controls').style.display = 'block';
+        loader.classList.add('hidden');
+        canvas.style.display = 'block';
+        
+        // Optional: Show message if save was restored
+        saveManager.load('auto').then(data => {
+            if (data) {
+                console.log('Save data loaded from previous session');
+            }
+        });
+    }]
+};
                 
                 Love(Module);
             } catch (err) {
