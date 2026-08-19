@@ -201,35 +201,27 @@
             const totalParts = moduleFiles.length;
             const parts = [];
             
-            // Load modules sequentially with progress updates
             for (let i = 0; i < totalParts; i++) {
                 try {
                     loaderText.textContent = `Loading module ${i + 1} of ${totalParts}...`;
-                    
                     const response = await fetch(moduleFiles[i]);
                     if (!response.ok) throw new Error(`Failed to load ${moduleFiles[i]}`);
-                    
                     const text = await response.text();
                     parts.push(text);
-                    
-                    // Update progress
                     const progress = ((i + 1) / totalParts) * 100;
                     progressBar.style.width = progress + '%';
-                    
                 } catch (err) {
                     console.error('Module load error:', err);
                     loaderText.textContent = `Error loading module ${i + 1}. Retrying...`;
-                    i--; // Retry this module
+                    i--;
                     await new Promise(r => setTimeout(r, 1000));
                 }
             }
             
-            // Inject combined modules
             loaderText.textContent = 'Initializing game...';
             const script = document.createElement('script');
             script.text = parts.join('');
             document.head.appendChild(script);
-            
             return true;
         }
         
@@ -237,19 +229,17 @@
         const saveManager = {
             DB_NAME: 'BalatroSaves',
             STORE_NAME: 'saveData',
-            AUTO_SAVE_INTERVAL: 30000, // 30 seconds
+            AUTO_SAVE_INTERVAL: 30000,
             db: null,
             
             async init() {
                 return new Promise((resolve, reject) => {
                     const request = indexedDB.open(this.DB_NAME, 1);
-                    
                     request.onerror = () => reject(request.error);
                     request.onsuccess = () => {
                         this.db = request.result;
                         resolve();
                     };
-                    
                     request.onupgradeneeded = (event) => {
                         const db = event.target.result;
                         if (!db.objectStoreNames.contains(this.STORE_NAME)) {
@@ -261,24 +251,15 @@
             
             async save(slot = 'auto', data = null) {
                 if (!this.db) return;
-                
                 try {
-                    // If no data provided, try to get from game
-                    if (!data && window.Love && window.Love.filesystem) {
+                    if (!data && window.Module && window.Module.FS) {
                         data = await this.captureGameState();
                     }
-                    
-                    if (!data) return; // Nothing to save
+                    if (!data) return;
                     
                     const transaction = this.db.transaction([this.STORE_NAME], 'readwrite');
                     const store = transaction.objectStore(this.STORE_NAME);
-                    
-                    const saveData = {
-                        slot: slot,
-                        data: data,
-                        timestamp: Date.now(),
-                        version: '1.0'
-                    };
+                    const saveData = { slot, data, timestamp: Date.now(), version: '1.0' };
                     
                     await new Promise((resolve, reject) => {
                         const request = store.put(saveData);
@@ -288,7 +269,6 @@
                     
                     this.showIndicator();
                     console.log(`Saved to slot: ${slot}`);
-                    
                 } catch (err) {
                     console.error('Save failed:', err);
                 }
@@ -296,19 +276,15 @@
             
             async load(slot = 'auto') {
                 if (!this.db) return null;
-                
                 try {
                     const transaction = this.db.transaction([this.STORE_NAME], 'readonly');
                     const store = transaction.objectStore(this.STORE_NAME);
-                    
                     const result = await new Promise((resolve, reject) => {
                         const request = store.get(slot);
                         request.onsuccess = () => resolve(request.result);
                         request.onerror = () => reject(request.error);
                     });
-                    
                     return result ? result.data : null;
-                    
                 } catch (err) {
                     console.error('Load failed:', err);
                     return null;
@@ -316,24 +292,19 @@
             },
             
             async captureGameState() {
-                // Hook into LÖVE filesystem if available
                 if (window.Module && window.Module.FS) {
                     try {
-                        // Read save directory from virtual FS
                         const saveDir = '/home/web_user/.local/share/love/game/save';
                         const files = window.Module.FS.readdir(saveDir);
                         const saveData = {};
-                        
                         for (const file of files) {
                             if (file === '.' || file === '..') continue;
                             const path = saveDir + '/' + file;
                             const content = window.Module.FS.readFile(path);
                             saveData[file] = Array.from(content);
                         }
-                        
                         return saveData;
                     } catch (e) {
-                        // Directory might not exist yet
                         return null;
                     }
                 }
@@ -342,21 +313,13 @@
             
             async restoreGameState(saveData) {
                 if (!window.Module || !window.Module.FS || !saveData) return;
-                
                 try {
                     const saveDir = '/home/web_user/.local/share/love/game/save';
-                    
-                    // Create directory if needed
-                    try {
-                        window.Module.FS.mkdirTree(saveDir);
-                    } catch (e) { /* exists */ }
-                    
-                    // Write each file
+                    try { window.Module.FS.mkdirTree(saveDir); } catch (e) {}
                     for (const [filename, content] of Object.entries(saveData)) {
                         const path = saveDir + '/' + filename;
                         window.Module.FS.writeFile(path, new Uint8Array(content));
                     }
-                    
                     console.log('Game state restored');
                 } catch (err) {
                     console.error('Restore failed:', err);
@@ -370,11 +333,7 @@
             
             async exportSave() {
                 const data = await this.load('auto');
-                if (!data) {
-                    alert('No save data found!');
-                    return;
-                }
-                
+                if (!data) { alert('No save data found!'); return; }
                 const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
@@ -391,7 +350,6 @@
                 input.onchange = async (e) => {
                     const file = e.target.files[0];
                     if (!file) return;
-                    
                     try {
                         const text = await file.text();
                         const data = JSON.parse(text);
@@ -412,42 +370,26 @@
             },
             
             startAutoSave() {
-                // Auto-save every 30 seconds
-                setInterval(() => {
-                    this.save('auto');
-                }, this.AUTO_SAVE_INTERVAL);
-                
-                // Also save on page hide (switching tabs, closing)
+                setInterval(() => this.save('auto'), this.AUTO_SAVE_INTERVAL);
                 document.addEventListener('visibilitychange', () => {
-                    if (document.hidden) {
-                        this.save('auto');
-                    }
+                    if (document.hidden) this.save('auto');
                 });
-                
-                // Save before unload
-                window.addEventListener('beforeunload', () => {
-                    this.save('auto');
-                });
+                window.addEventListener('beforeunload', () => this.save('auto'));
             }
         };
         
-        // Initialize everything
         (async () => {
             try {
-                // Load modules
                 await loadModules();
-                
-                // Initialize save system
                 await saveManager.init();
-                
-                // Get game data
                 const d = await getSource();
                 
-                // Configure Module with optimized settings
+                // FIXED: Increased memory and proper allocation
                 window.Module = {
-                    INITIAL_MEMORY: 2**26, // 64MB instead of 256MB
+                    // Use 128MB minimum with growth instead of 64MB
+                    INITIAL_MEMORY: 134217728, // 128MB
                     ALLOW_MEMORY_GROWTH: 1,
-                    TOTAL_STACK: 2**20, // 1MB stack
+                    TOTAL_STACK: 5242880, // 5MB stack
                     canvas: canvas,
                     printErr: console.error,
                     arguments: ["game.love"],
@@ -455,43 +397,31 @@
                     preRun: [function() {
                         Module.addRunDependency("fp game.love");
                         
-                        // Restore saved data if exists
-                        saveManager.load('auto').then(saveData => {
-                            if (saveData) {
-                                console.log('Found existing save, will restore after init');
-                                Module._pendingSaveData = saveData;
-                            }
-                        });
+                        // FIXED: Ensure memory is allocated before using getMemory
+                        const needed = d.length;
+                        const ptr = Module._malloc ? Module._malloc(needed) : Module.getMemory(needed);
                         
-                        var ptr = Module.getMemory(d.length);
+                        if (!ptr) {
+                            throw new Error("Failed to allocate memory for game file");
+                        }
+                        
                         Module.HEAPU8.set(d, ptr);
                         Module.FS_createDataFile('/', "game.love", d, true, true, true);
                         Module.removeRunDependency("fp game.love");
                     }],
                     
                     postRun: [function() {
-                        // Restore save data after game init
                         if (Module._pendingSaveData) {
-                            setTimeout(() => {
-                                saveManager.restoreGameState(Module._pendingSaveData);
-                            }, 1000);
+                            setTimeout(() => saveManager.restoreGameState(Module._pendingSaveData), 1000);
                         }
-                        
-                        // Start auto-save
                         saveManager.startAutoSave();
-                        
-                        // Show save controls
                         document.getElementById('save-controls').style.display = 'block';
-                        
-                        // Hide loader
                         loader.classList.add('hidden');
                         canvas.style.display = 'block';
                     }]
                 };
                 
-                // Start LÖVE
                 Love(Module);
-                
             } catch (err) {
                 console.error('Initialization failed:', err);
                 loaderText.textContent = 'Error: ' + err.message;
