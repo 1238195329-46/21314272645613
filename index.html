@@ -121,32 +121,6 @@
         }
     </style>
     
-    <script>
-        const PREFIX = "Balatro_Vanilla_";
-        const originalOpen = indexedDB.open;
-        const originalDeleteDatabase = indexedDB.deleteDatabase;
-        const prefixCache = new Map();
-        
-        function getPrefixedName(name) {
-            if (!prefixCache.has(name)) {
-                prefixCache.set(name, PREFIX + name);
-            }
-            return prefixCache.get(name);
-        }
-        
-        indexedDB.open = function(name, version) {
-            const prefixedName = getPrefixedName(name);
-            return version !== undefined 
-                ? originalOpen.call(this, prefixedName, version)
-                : originalOpen.call(this, prefixedName);
-        };
-        
-        indexedDB.deleteDatabase = function(name) {
-            const prefixedName = getPrefixedName(name);
-            return originalDeleteDatabase.call(this, prefixedName);
-        };
-    </script>
-    
     <script src="love.min.js"></script>
 </head>
 <body>
@@ -158,31 +132,30 @@
         <div id="loader-text">Loading modules...</div>
     </div>
     
-    <div id="autosave-indicator">💾 Auto-saved</div>
+    <div id="autosave-indicator">💾 Synced</div>
     
     <div id="save-controls">
-        <button class="save-btn" onclick="saveManager.manualSave()">💾 Save Now</button>
-        <button class="save-btn" onclick="saveManager.exportSave()">📤 Export</button>
-        <button class="save-btn" onclick="saveManager.importSave()">📥 Import</button>
+        <button class="save-btn" onclick="syncSaves()">💾 Force Save</button>
+        <button class="save-btn" onclick="exportSave()">📤 Export</button>
+        <button class="save-btn" onclick="importSave()">📥 Import</button>
     </div>
     
     <canvas id="canvas"></canvas>
     
     <script>
         const moduleFiles = [
-            "module.part1.js",
-            "module.part2.js", 
-            "module.part3.js",
-            "module.part4.js",
-            "module.part5.js",
-            "module.part6.js",
-            "module.part7.js"
+            "module.part1.js", "module.part2.js", "module.part3.js",
+            "module.part4.js", "module.part5.js", "module.part6.js", "module.part7.js"
         ];
         
         const progressBar = document.getElementById('progress-bar');
         const loaderText = document.getElementById('loader-text');
         const loader = document.getElementById('loader');
         const canvas = document.getElementById('canvas');
+        
+        // Balatro's save directory (LÖVE uses identity for folder name)
+        const SAVE_DIR = '/home/web_user/.local/share/love/Balatro';
+        let saveSyncInterval;
         
         async function loadModules() {
             const parts = [];
@@ -206,195 +179,153 @@
             document.head.appendChild(script);
         }
         
-        const saveManager = {
-            DB_NAME: 'BalatroSaves',
-            STORE_NAME: 'saveData',
-            db: null,
-            
-            async init() {
-                return new Promise((resolve, reject) => {
-                    const request = indexedDB.open(this.DB_NAME, 1);
-                    request.onerror = () => reject(request.error);
-                    request.onsuccess = () => { this.db = request.result; resolve(); };
-                    request.onupgradeneeded = (e) => {
-                        e.target.result.createObjectStore(this.STORE_NAME, { keyPath: 'slot' });
-                    };
+        // Mount IDBFS and sync FROM IndexedDB (load existing saves)
+        function mountAndLoadSaves() {
+            return new Promise((resolve, reject) => {
+                try {
+                    // Create save directory
+                    Module.FS.mkdirTree(SAVE_DIR);
+                    
+                    // Mount IDBFS for persistence
+                    Module.FS.mount(Module.FS.filesystems.IDBFS, {}, SAVE_DIR);
+                    
+                    console.log('Mounted IDBFS, syncing from storage...');
+                    loaderText.textContent = 'Loading save data...';
+                    
+                    // syncfs(true) = load FROM IndexedDB TO filesystem
+                    Module.FS.syncfs(true, (err) => {
+                        if (err) {
+                            console.error('Sync error:', err);
+                            reject(err);
+                        } else {
+                            console.log('Save data loaded from IndexedDB');
+                            
+                            // List what we loaded
+                            try {
+                                const files = Module.FS.readdir(SAVE_DIR);
+                                console.log('Save files found:', files.filter(f => f !== '.' && f !== '..'));
+                            } catch (e) {
+                                console.log('No existing saves');
+                            }
+                            
+                            resolve();
+                        }
+                    });
+                } catch (err) {
+                    console.error('Mount error:', err);
+                    reject(err);
+                }
+            });
+        }
+        
+        // Sync TO IndexedDB (save current state)
+        function syncSaves() {
+            return new Promise((resolve) => {
+                if (!Module.FS) return resolve();
+                
+                Module.FS.syncfs(false, (err) => {
+                    if (err) console.error('Save sync error:', err);
+                    else {
+                        console.log('Saved to IndexedDB');
+                        const indicator = document.getElementById('autosave-indicator');
+                        indicator.classList.add('visible');
+                        setTimeout(() => indicator.classList.remove('visible'), 2000);
+                    }
+                    resolve();
                 });
-            },
-            
-            async save(slot = 'auto', data = null) {
-                if (!this.db) return;
-                try {
-                    if (!data && window.Module?.FS) {
-                        data = await this.captureGameState();
-                    }
-                    if (!data) return;
-                    
-                    const tx = this.db.transaction([this.STORE_NAME], 'readwrite');
-                    const store = tx.objectStore(this.STORE_NAME);
-                    await new Promise((res, rej) => {
-                        const req = store.put({ slot, data, timestamp: Date.now() });
-                        req.onsuccess = () => res();
-                        req.onerror = () => rej(req.error);
-                    });
-                    
-                    const indicator = document.getElementById('autosave-indicator');
-                    indicator.classList.add('visible');
-                    setTimeout(() => indicator.classList.remove('visible'), 2000);
-                } catch (err) {
-                    console.error('Save failed:', err);
+            });
+        }
+        
+        // Export saves to file
+        function exportSave() {
+            if (!Module.FS) return alert('Game not loaded');
+            try {
+                const files = Module.FS.readdir(SAVE_DIR).filter(f => f !== '.' && f !== '..');
+                const exportData = {};
+                
+                for (const file of files) {
+                    const path = SAVE_DIR + '/' + file;
+                    const content = Module.FS.readFile(path);
+                    exportData[file] = Array.from(content);
                 }
-            },
-            
-            async load(slot = 'auto') {
-                if (!this.db) return null;
-                try {
-                    const tx = this.db.transaction([this.STORE_NAME], 'readonly');
-                    const store = tx.objectStore(this.STORE_NAME);
-                    const result = await new Promise((res, rej) => {
-                        const req = store.get(slot);
-                        req.onsuccess = () => res(req.result);
-                        req.onerror = () => rej(req.error);
-                    });
-                    return result?.data || null;
-                } catch (err) {
-                    console.error('Load failed:', err);
-                    return null;
-                }
-            },
-            
-            async captureGameState() {
-                if (!window.Module?.FS) return null;
-                try {
-                    const saveDir = '/home/web_user/.local/share/love/game/save';
-                    const files = window.Module.FS.readdir(saveDir);
-                    const data = {};
-                    for (const file of files) {
-                        if (file === '.' || file === '..') continue;
-                        data[file] = Array.from(window.Module.FS.readFile(saveDir + '/' + file));
-                    }
-                    return data;
-                } catch (e) {
-                    return null;
-                }
-            },
-            
-            async restoreGameState(saveData) {
-                if (!window.Module?.FS || !saveData) return;
-                try {
-                    const saveDir = '/home/web_user/.local/share/love/game/save';
-                    try { window.Module.FS.mkdirTree(saveDir); } catch (e) {}
-                    for (const [name, content] of Object.entries(saveData)) {
-                        window.Module.FS.writeFile(saveDir + '/' + name, new Uint8Array(content));
-                    }
-                } catch (err) {
-                    console.error('Restore failed:', err);
-                }
-            },
-            
-            manualSave() {
-                this.save('manual_' + Date.now());
-                alert('Saved!');
-            },
-            
-            async exportSave() {
-                const data = await this.load('auto');
-                if (!data) return alert('No save data!');
-                const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
+                
+                const blob = new Blob([JSON.stringify(exportData)], { type: 'application/json' });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = `balatro-save-${new Date().toISOString().slice(0,10)}.json`;
+                a.download = `balatro-backup-${new Date().toISOString().slice(0,10)}.json`;
                 a.click();
                 URL.revokeObjectURL(url);
-            },
-            
-            importSave() {
-                const input = document.createElement('input');
-                input.type = 'file';
-                input.accept = '.json';
-                input.onchange = async (e) => {
-                    const file = e.target.files[0];
-                    if (!file) return;
-                    try {
-                        const data = JSON.parse(await file.text());
-                        await this.save('auto', data);
-                        await this.restoreGameState(data);
-                        alert('Imported!');
-                    } catch (err) {
-                        alert('Import failed: ' + err.message);
-                    }
-                };
-                input.click();
-            },
-            
-            startAutoSave() {
-                setInterval(() => this.save('auto'), 30000);
-                document.addEventListener('visibilitychange', () => {
-                    if (document.hidden) this.save('auto');
-                });
-                window.addEventListener('beforeunload', () => this.save('auto'));
+            } catch (err) {
+                alert('Export failed: ' + err.message);
             }
-        };
+        }
+        
+        // Import saves from file
+        function importSave() {
+            if (!Module.FS) return alert('Game not loaded');
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.json';
+            input.onchange = async (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                try {
+                    const data = JSON.parse(await file.text());
+                    for (const [name, content] of Object.entries(data)) {
+                        Module.FS.writeFile(SAVE_DIR + '/' + name, new Uint8Array(content));
+                    }
+                    await syncSaves(); // Persist to IndexedDB
+                    alert('Imported! Reload page to load the save.');
+                } catch (err) {
+                    alert('Import failed: ' + err.message);
+                }
+            };
+            input.click();
+        }
         
         (async () => {
             try {
                 await loadModules();
-                await saveManager.init();
                 const d = await getSource();
                 
                 window.Module = {
-    INITIAL_MEMORY: 268435456,
-    ALLOW_MEMORY_GROWTH: 1,
-    canvas: canvas,
-    printErr: console.error,
-    arguments: ["game.love"],
-    
-    preRun: [async function() {
-        Module.addRunDependency("fp game.love");
-        
-        // Create the game.love file
-        Module.FS_createDataFile('/', "game.love", d, true, true, true);
-        
-        // NOW restore save files BEFORE game starts
-        const saveData = await saveManager.load('auto');
-        if (saveData) {
-            console.log('Restoring save files...', Object.keys(saveData));
-            try {
-                const saveDir = '/home/web_user/.local/share/love/game/save';
-                try { Module.FS.mkdirTree(saveDir); } catch (e) {}
-                
-                for (const [name, content] of Object.entries(saveData)) {
-                    const path = saveDir + '/' + name;
-                    Module.FS.writeFile(path, new Uint8Array(content));
-                    console.log('Restored:', name, 'Size:', content.length);
-                }
-                console.log('Save files restored successfully');
-            } catch (err) {
-                console.error('Restore failed:', err);
-            }
-        } else {
-            console.log('No save data found');
-        }
-        
-        Module.removeRunDependency("fp game.love");
-    }],
-    
-    postRun: [function() {
-        // Start autosave after game is running
-        saveManager.startAutoSave();
-        document.getElementById('save-controls').style.display = 'block';
-        loader.classList.add('hidden');
-        canvas.style.display = 'block';
-        
-        // Optional: Show message if save was restored
-        saveManager.load('auto').then(data => {
-            if (data) {
-                console.log('Save data loaded from previous session');
-            }
-        });
-    }]
-};
+                    INITIAL_MEMORY: 268435456,
+                    ALLOW_MEMORY_GROWTH: 1,
+                    canvas: canvas,
+                    printErr: console.error,
+                    arguments: ["game.love"],
+                    
+                    preRun: [async function() {
+                        Module.addRunDependency("fp game.love");
+                        
+                        // Create game.love file
+                        Module.FS_createDataFile('/', "game.love", d, true, true, true);
+                        
+                        // Mount IDBFS and load existing saves BEFORE game starts
+                        await mountAndLoadSaves();
+                        
+                        Module.removeRunDependency("fp game.love");
+                    }],
+                    
+                    postRun: [function() {
+                        // Auto-sync every 30 seconds
+                        saveSyncInterval = setInterval(syncSaves, 30000);
+                        
+                        // Sync on page hide/close
+                        document.addEventListener('visibilitychange', () => {
+                            if (document.hidden) syncSaves();
+                        });
+                        
+                        window.addEventListener('beforeunload', () => {
+                            syncSaves();
+                        });
+                        
+                        document.getElementById('save-controls').style.display = 'block';
+                        loader.classList.add('hidden');
+                        canvas.style.display = 'block';
+                    }]
+                };
                 
                 Love(Module);
             } catch (err) {
@@ -407,7 +338,7 @@
     <script>
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.register('sw.js')
-                .then(r => console.log('SW registered'))
+                .then(() => console.log('SW registered'))
                 .catch(e => console.log('SW failed:', e));
         }
     </script>
