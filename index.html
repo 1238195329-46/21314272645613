@@ -3,13 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Balatro | NO SAVING YET</title>
-    
+    <title>Balatro Web</title>
+
     <link rel="preload" href="love.min.js" as="script">
-    
+
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        
+
         body {
             width: 100vw;
             height: 100vh;
@@ -17,7 +17,7 @@
             font-family: system-ui, -apple-system, sans-serif;
             overflow: hidden;
         }
-        
+
         #canvas {
             position: absolute;
             top: 0;
@@ -26,7 +26,7 @@
             height: 100vh;
             display: none;
         }
-        
+
         #loader {
             position: fixed;
             top: 0;
@@ -41,12 +41,12 @@
             z-index: 1000;
             transition: opacity 0.5s;
         }
-        
+
         #loader.hidden {
             opacity: 0;
             pointer-events: none;
         }
-        
+
         .loader-title {
             color: #e94560;
             font-size: 2.5rem;
@@ -54,7 +54,7 @@
             margin-bottom: 2rem;
             text-shadow: 0 0 20px rgba(233, 69, 96, 0.5);
         }
-        
+
         .progress-container {
             width: 300px;
             height: 8px;
@@ -63,20 +63,20 @@
             overflow: hidden;
             margin-bottom: 1rem;
         }
-        
+
         #progress-bar {
             width: 0%;
             height: 100%;
             background: linear-gradient(90deg, #e94560, #ff6b6b);
             transition: width 0.3s ease;
         }
-        
+
         #loader-text {
             color: #eee;
             font-size: 0.9rem;
             opacity: 0.8;
         }
-        
+
         #autosave-indicator {
             position: fixed;
             top: 10px;
@@ -91,11 +91,11 @@
             z-index: 100;
             pointer-events: none;
         }
-        
+
         #autosave-indicator.visible {
             opacity: 1;
         }
-        
+
         #save-controls {
             position: fixed;
             top: 10px;
@@ -103,7 +103,7 @@
             z-index: 100;
             display: none;
         }
-        
+
         .save-btn {
             background: rgba(233, 69, 96, 0.8);
             border: none;
@@ -115,12 +115,12 @@
             font-size: 12px;
             transition: background 0.2s;
         }
-        
+
         .save-btn:hover {
             background: rgba(233, 69, 96, 1);
         }
     </style>
-    
+
     <script src="love.min.js"></script>
 </head>
 <body>
@@ -131,32 +131,52 @@
         </div>
         <div id="loader-text">Loading modules...</div>
     </div>
-    
+
     <div id="autosave-indicator">💾 Synced</div>
-    
+
     <div id="save-controls">
         <button class="save-btn" onclick="syncSaves()">💾 Force Save</button>
         <button class="save-btn" onclick="exportSave()">📤 Export</button>
         <button class="save-btn" onclick="importSave()">📥 Import</button>
     </div>
-    
+
     <canvas id="canvas"></canvas>
-    
+
     <script>
         const moduleFiles = [
             "module.part1.js", "module.part2.js", "module.part3.js",
             "module.part4.js", "module.part5.js", "module.part6.js", "module.part7.js"
         ];
-        
+
         const progressBar = document.getElementById('progress-bar');
         const loaderText = document.getElementById('loader-text');
         const loader = document.getElementById('loader');
         const canvas = document.getElementById('canvas');
-        
-        // Balatro's save directory (LÖVE uses identity for folder name)
+
+        // Balatro's save directory (LÖVE uses identity for folder name).
+        // If saves still don't capture correctly, check the console log in
+        // preRun below — it lists what's actually inside the parent "love"
+        // folder, which tells you the real identity name if this is wrong.
         const SAVE_DIR = '/home/web_user/.local/share/love/Balatro';
         let saveSyncInterval;
-        
+        let idbfsMounted = false;
+
+        // --- FS resolver -----------------------------------------------
+        // This build only exports the legacy FS_* wrapper functions onto
+        // Module (FS_createDataFile etc). The full FS namespace (needed for
+        // mkdirTree/mount/syncfs) is NOT aliased onto Module in this build —
+        // confirmed by the "Cannot read properties of undefined (reading
+        // 'mkdirTree')" error on Module.FS. In non-modularized Emscripten
+        // output (plain concatenated <script> tags, which is what our
+        // loader does), the FS object is usually still reachable as a bare
+        // global instead. This helper checks both spots so the rest of the
+        // code doesn't care which one this particular build uses.
+        function getFS() {
+            if (window.Module && Module.FS) return Module.FS;
+            if (typeof FS !== 'undefined' && FS) return FS;
+            return null;
+        }
+
         async function loadModules() {
             const parts = [];
             for (let i = 0; i < moduleFiles.length; i++) {
@@ -178,155 +198,178 @@
             script.text = parts.join('');
             document.head.appendChild(script);
         }
-        
-        // Mount IDBFS and sync FROM IndexedDB (load existing saves)
-        function mountAndLoadSaves() {
-            return new Promise((resolve, reject) => {
-                try {
-                    // Create save directory
-                    Module.FS.mkdirTree(SAVE_DIR);
-                    
-                    // Mount IDBFS for persistence
-                    Module.FS.mount(Module.FS.filesystems.IDBFS, {}, SAVE_DIR);
-                    
-                    console.log('Mounted IDBFS, syncing from storage...');
-                    loaderText.textContent = 'Loading save data...';
-                    
-                    // syncfs(true) = load FROM IndexedDB TO filesystem
-                    Module.FS.syncfs(true, (err) => {
-                        if (err) {
-                            console.error('Sync error:', err);
-                            reject(err);
-                        } else {
-                            console.log('Save data loaded from IndexedDB');
-                            
-                            // List what we loaded
-                            try {
-                                const files = Module.FS.readdir(SAVE_DIR);
-                                console.log('Save files found:', files.filter(f => f !== '.' && f !== '..'));
-                            } catch (e) {
-                                console.log('No existing saves');
-                            }
-                            
-                            resolve();
-                        }
-                    });
-                } catch (err) {
-                    console.error('Mount error:', err);
-                    reject(err);
-                }
-            });
-        }
-        
+
         // Sync TO IndexedDB (save current state)
         function syncSaves() {
-            return new Promise((resolve) => {
-                if (!Module.FS) return resolve();
-                
-                Module.FS.syncfs(false, (err) => {
-                    if (err) console.error('Save sync error:', err);
-                    else {
-                        console.log('Saved to IndexedDB');
-                        const indicator = document.getElementById('autosave-indicator');
-                        indicator.classList.add('visible');
-                        setTimeout(() => indicator.classList.remove('visible'), 2000);
-                    }
-                    resolve();
-                });
+            const fs = getFS();
+            if (!fs || !idbfsMounted) return;
+            fs.syncfs(false, function(err) {
+                if (err) {
+                    console.error('Save sync error:', err);
+                } else {
+                    console.log('Saved to IndexedDB');
+                    const indicator = document.getElementById('autosave-indicator');
+                    indicator.classList.add('visible');
+                    setTimeout(function() { indicator.classList.remove('visible'); }, 2000);
+                }
             });
         }
-        
+
         // Export saves to file
         function exportSave() {
-            if (!Module.FS) return alert('Game not loaded');
+            const fs = getFS();
+            if (!fs || !idbfsMounted) return alert('Game not loaded yet (or save sync unavailable)');
             try {
-                const files = Module.FS.readdir(SAVE_DIR).filter(f => f !== '.' && f !== '..');
-                const exportData = {};
-                
-                for (const file of files) {
-                    const path = SAVE_DIR + '/' + file;
-                    const content = Module.FS.readFile(path);
+                var files = fs.readdir(SAVE_DIR).filter(function(f) {
+                    return f !== '.' && f !== '..';
+                });
+                var exportData = {};
+
+                for (var i = 0; i < files.length; i++) {
+                    var file = files[i];
+                    var path = SAVE_DIR + '/' + file;
+                    var content = fs.readFile(path);
                     exportData[file] = Array.from(content);
                 }
-                
-                const blob = new Blob([JSON.stringify(exportData)], { type: 'application/json' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
+
+                var blob = new Blob([JSON.stringify(exportData)], { type: 'application/json' });
+                var url = URL.createObjectURL(blob);
+                var a = document.createElement('a');
                 a.href = url;
-                a.download = `balatro-backup-${new Date().toISOString().slice(0,10)}.json`;
+                a.download = 'balatro-backup-' + new Date().toISOString().slice(0,10) + '.json';
                 a.click();
                 URL.revokeObjectURL(url);
             } catch (err) {
                 alert('Export failed: ' + err.message);
             }
         }
-        
-        // Import saves from file
+
         function importSave() {
-            if (!Module.FS) return alert('Game not loaded');
-            const input = document.createElement('input');
+            const fs = getFS();
+            if (!fs || !idbfsMounted) return alert('Game not loaded yet (or save sync unavailable)');
+            var input = document.createElement('input');
             input.type = 'file';
             input.accept = '.json';
-            input.onchange = async (e) => {
-                const file = e.target.files[0];
+            input.onchange = function(e) {
+                var file = e.target.files[0];
                 if (!file) return;
-                try {
-                    const data = JSON.parse(await file.text());
-                    for (const [name, content] of Object.entries(data)) {
-                        Module.FS.writeFile(SAVE_DIR + '/' + name, new Uint8Array(content));
+
+                var reader = new FileReader();
+                reader.onload = function(event) {
+                    try {
+                        var data = JSON.parse(event.target.result);
+                        for (var name in data) {
+                            if (data.hasOwnProperty(name)) {
+                                fs.writeFile(SAVE_DIR + '/' + name, new Uint8Array(data[name]));
+                            }
+                        }
+                        syncSaves();
+                        alert('Imported! Reload page to load the save.');
+                    } catch (err) {
+                        alert('Import failed: ' + err.message);
                     }
-                    await syncSaves(); // Persist to IndexedDB
-                    alert('Imported! Reload page to load the save.');
-                } catch (err) {
-                    alert('Import failed: ' + err.message);
-                }
+                };
+                reader.readAsText(file);
             };
             input.click();
         }
-        
+
         (async () => {
             try {
                 await loadModules();
                 const d = await getSource();
-                
+
                 window.Module = {
                     INITIAL_MEMORY: 268435456,
                     ALLOW_MEMORY_GROWTH: 1,
                     canvas: canvas,
                     printErr: console.error,
                     arguments: ["game.love"],
-                    
-                    preRun: [async function() {
+
+                    preRun: [function() {
                         Module.addRunDependency("fp game.love");
-                        
-                        // Create game.love file
+                        Module.addRunDependency("mount_idbfs");
+
+                        // Create game.love file (this always worked — legacy
+                        // wrapper, exists regardless of FS export settings)
                         Module.FS_createDataFile('/', "game.love", d, true, true, true);
-                        
-                        // Mount IDBFS and load existing saves BEFORE game starts
-                        await mountAndLoadSaves();
-                        
                         Module.removeRunDependency("fp game.love");
+
+                        // One-time diagnostic so we know for certain what's
+                        // available in this build if anything still breaks.
+                        console.log('[save-debug] Module.FS:', typeof Module.FS, '| global FS:', typeof FS);
+
+                        const fs = getFS();
+                        if (!fs) {
+                            console.warn('No FS object reachable (neither Module.FS nor global FS). ' +
+                                         'Save persistence is unavailable in this build; game will still load.');
+                            Module.removeRunDependency("mount_idbfs");
+                            return;
+                        }
+
+                        try {
+                            fs.mkdirTree(SAVE_DIR);
+                            fs.mount(fs.filesystems.IDBFS, {}, SAVE_DIR);
+                            idbfsMounted = true;
+
+                            console.log('Mounted IDBFS, syncing from storage...');
+                            loaderText.textContent = 'Loading save data...';
+
+                            fs.syncfs(true, function(err) {
+                                if (err) {
+                                    console.error('Sync error:', err);
+                                } else {
+                                    console.log('Save data loaded from IndexedDB');
+                                    try {
+                                        const files = fs.readdir(SAVE_DIR).filter(f => f !== '.' && f !== '..');
+                                        console.log('Save files found:', files);
+                                        if (files.length === 0) {
+                                            // Helps confirm SAVE_DIR's identity segment is correct
+                                            const parent = fs.readdir('/home/web_user/.local/share/love')
+                                                .filter(f => f !== '.' && f !== '..');
+                                            console.log('[save-debug] identity folders under .../love:', parent);
+                                        }
+                                    } catch (e) {
+                                        console.log('No existing saves found yet');
+                                    }
+                                }
+                                Module.removeRunDependency("mount_idbfs");
+                            });
+                        } catch (err) {
+                            // If the runtime already mounted something at this
+                            // path internally, mount() throws "already mounted".
+                            // In that case the directory is still usable — just
+                            // skip the redundant mount and try syncing directly.
+                            console.warn('Mount error (may already be mounted internally):', err.message);
+                            idbfsMounted = /already/i.test(err.message || '');
+                            if (idbfsMounted) {
+                                fs.syncfs(true, function(err2) {
+                                    if (err2) console.error('Sync error after mount conflict:', err2);
+                                    Module.removeRunDependency("mount_idbfs");
+                                });
+                            } else {
+                                Module.removeRunDependency("mount_idbfs");
+                            }
+                        }
                     }],
-                    
+
                     postRun: [function() {
                         // Auto-sync every 30 seconds
                         saveSyncInterval = setInterval(syncSaves, 30000);
-                        
-                        // Sync on page hide/close
-                        document.addEventListener('visibilitychange', () => {
+
+                        // Sync on page hide (more reliable than beforeunload,
+                        // since browsers don't guarantee async IndexedDB writes
+                        // finish before beforeunload actually closes the tab)
+                        document.addEventListener('visibilitychange', function() {
                             if (document.hidden) syncSaves();
                         });
-                        
-                        window.addEventListener('beforeunload', () => {
-                            syncSaves();
-                        });
-                        
+
                         document.getElementById('save-controls').style.display = 'block';
                         loader.classList.add('hidden');
                         canvas.style.display = 'block';
                     }]
                 };
-                
+
                 Love(Module);
             } catch (err) {
                 console.error(err);
