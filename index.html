@@ -220,69 +220,74 @@
         
         // Sync TO IndexedDB (save current state)
         function syncSaves() {
-            return new Promise((resolve) => {
-                if (!Module.FS) return resolve();
-                
-                Module.FS.syncfs(false, (err) => {
-                    if (err) console.error('Save sync error:', err);
-                    else {
-                        console.log('Saved to IndexedDB');
-                        const indicator = document.getElementById('autosave-indicator');
-                        indicator.classList.add('visible');
-                        setTimeout(() => indicator.classList.remove('visible'), 2000);
-                    }
-                    resolve();
-                });
-            });
+    if (!Module.FS) return;
+    Module.FS.syncfs(false, function(err) {
+        if (err) console.error('Save sync error:', err);
+        else {
+            console.log('Saved to IndexedDB');
+            const indicator = document.getElementById('autosave-indicator');
+            indicator.classList.add('visible');
+            setTimeout(function() { indicator.classList.remove('visible'); }, 2000);
         }
+    });
+}
         
         // Export saves to file
         function exportSave() {
-            if (!Module.FS) return alert('Game not loaded');
-            try {
-                const files = Module.FS.readdir(SAVE_DIR).filter(f => f !== '.' && f !== '..');
-                const exportData = {};
-                
-                for (const file of files) {
-                    const path = SAVE_DIR + '/' + file;
-                    const content = Module.FS.readFile(path);
-                    exportData[file] = Array.from(content);
-                }
-                
-                const blob = new Blob([JSON.stringify(exportData)], { type: 'application/json' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `balatro-backup-${new Date().toISOString().slice(0,10)}.json`;
-                a.click();
-                URL.revokeObjectURL(url);
-            } catch (err) {
-                alert('Export failed: ' + err.message);
-            }
+    if (!Module.FS) return alert('Game not loaded');
+    try {
+        var files = Module.FS.readdir(SAVE_DIR).filter(function(f) { 
+            return f !== '.' && f !== '..'; 
+        });
+        var exportData = {};
+        
+        for (var i = 0; i < files.length; i++) {
+            var file = files[i];
+            var path = SAVE_DIR + '/' + file;
+            var content = Module.FS.readFile(path);
+            exportData[file] = Array.from(content);
         }
         
-        // Import saves from file
-        function importSave() {
-            if (!Module.FS) return alert('Game not loaded');
-            const input = document.createElement('input');
-            input.type = 'file';
-            input.accept = '.json';
-            input.onchange = async (e) => {
-                const file = e.target.files[0];
-                if (!file) return;
-                try {
-                    const data = JSON.parse(await file.text());
-                    for (const [name, content] of Object.entries(data)) {
-                        Module.FS.writeFile(SAVE_DIR + '/' + name, new Uint8Array(content));
+        var blob = new Blob([JSON.stringify(exportData)], { type: 'application/json' });
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = 'balatro-backup-' + new Date().toISOString().slice(0,10) + '.json';
+        a.click();
+        URL.revokeObjectURL(url);
+    } catch (err) {
+        alert('Export failed: ' + err.message);
+    }
+}
+
+function importSave() {
+    if (!Module.FS) return alert('Game not loaded');
+    var input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json';
+    input.onchange = function(e) {
+        var file = e.target.files[0];
+        if (!file) return;
+        
+        var reader = new FileReader();
+        reader.onload = function(event) {
+            try {
+                var data = JSON.parse(event.target.result);
+                for (var name in data) {
+                    if (data.hasOwnProperty(name)) {
+                        Module.FS.writeFile(SAVE_DIR + '/' + name, new Uint8Array(data[name]));
                     }
-                    await syncSaves(); // Persist to IndexedDB
-                    alert('Imported! Reload page to load the save.');
-                } catch (err) {
-                    alert('Import failed: ' + err.message);
                 }
-            };
-            input.click();
-        }
+                syncSaves();
+                alert('Imported! Reload page to load the save.');
+            } catch (err) {
+                alert('Import failed: ' + err.message);
+            }
+        };
+        reader.readAsText(file);
+    };
+    input.click();
+}
         
         (async () => {
             try {
@@ -290,42 +295,66 @@
                 const d = await getSource();
                 
                 window.Module = {
-                    INITIAL_MEMORY: 268435456,
-                    ALLOW_MEMORY_GROWTH: 1,
-                    canvas: canvas,
-                    printErr: console.error,
-                    arguments: ["game.love"],
-                    
-                    preRun: [async function() {
-                        Module.addRunDependency("fp game.love");
-                        
-                        // Create game.love file
-                        Module.FS_createDataFile('/', "game.love", d, true, true, true);
-                        
-                        // Mount IDBFS and load existing saves BEFORE game starts
-                        await mountAndLoadSaves();
-                        
-                        Module.removeRunDependency("fp game.love");
-                    }],
-                    
-                    postRun: [function() {
-                        // Auto-sync every 30 seconds
-                        saveSyncInterval = setInterval(syncSaves, 30000);
-                        
-                        // Sync on page hide/close
-                        document.addEventListener('visibilitychange', () => {
-                            if (document.hidden) syncSaves();
-                        });
-                        
-                        window.addEventListener('beforeunload', () => {
-                            syncSaves();
-                        });
-                        
-                        document.getElementById('save-controls').style.display = 'block';
-                        loader.classList.add('hidden');
-                        canvas.style.display = 'block';
-                    }]
-                };
+    INITIAL_MEMORY: 268435456,
+    ALLOW_MEMORY_GROWTH: 1,
+    canvas: canvas,
+    printErr: console.error,
+    arguments: ["game.love"],
+    
+    preRun: [function() {
+        Module.addRunDependency("fp game.love");
+        Module.addRunDependency("mount_idbfs");
+        
+        // Create game.love file
+        Module.FS_createDataFile('/', "game.love", d, true, true, true);
+        Module.removeRunDependency("fp game.love");
+        
+        // Mount IDBFS synchronously, then async sync
+        try {
+            Module.FS.mkdirTree(SAVE_DIR);
+            Module.FS.mount(Module.FS.filesystems.IDBFS, {}, SAVE_DIR);
+            
+            // syncfs(true) = load FROM IndexedDB
+            Module.FS.syncfs(true, function(err) {
+                if (err) console.error('Sync error:', err);
+                else console.log('Save data loaded');
+                Module.removeRunDependency("mount_idbfs");
+            });
+        } catch (err) {
+            console.error('Mount error:', err);
+            Module.removeRunDependency("mount_idbfs");
+        }
+    }],
+    
+    postRun: [function() {
+        // Auto-sync every 30 seconds
+        saveSyncInterval = setInterval(function() {
+            if (Module.FS) {
+                Module.FS.syncfs(false, function(err) {
+                    if (err) console.error('Autosave error:', err);
+                    else {
+                        const indicator = document.getElementById('autosave-indicator');
+                        indicator.classList.add('visible');
+                        setTimeout(function() { indicator.classList.remove('visible'); }, 2000);
+                    }
+                });
+            }
+        }, 30000);
+        
+        // Sync on page hide
+        document.addEventListener('visibilitychange', function() {
+            if (document.hidden && Module.FS) {
+                Module.FS.syncfs(false, function(err) {
+                    if (err) console.error('Visibility sync error:', err);
+                });
+            }
+        });
+        
+        document.getElementById('save-controls').style.display = 'block';
+        loader.classList.add('hidden');
+        canvas.style.display = 'block';
+    }]
+};
                 
                 Love(Module);
             } catch (err) {
