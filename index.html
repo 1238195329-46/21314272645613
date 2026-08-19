@@ -5,9 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Balatro Web</title>
     
-    <!-- Preload critical resources -->
     <link rel="preload" href="love.min.js" as="script">
-    <link rel="preconnect" href="https://1238195329-46.github.io">
     
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -29,7 +27,6 @@
             display: none;
         }
         
-        /* Loading Screen */
         #loader {
             position: fixed;
             top: 0;
@@ -72,7 +69,6 @@
             height: 100%;
             background: linear-gradient(90deg, #e94560, #ff6b6b);
             transition: width 0.3s ease;
-            box-shadow: 0 0 10px rgba(233, 69, 96, 0.5);
         }
         
         #loader-text {
@@ -81,7 +77,6 @@
             opacity: 0.8;
         }
         
-        /* Auto-save indicator */
         #autosave-indicator {
             position: fixed;
             top: 10px;
@@ -101,7 +96,6 @@
             opacity: 1;
         }
         
-        /* Save/Load buttons */
         #save-controls {
             position: fixed;
             top: 10px;
@@ -127,13 +121,10 @@
         }
     </style>
     
-    <!-- IndexedDB prefixing for isolation -->
     <script>
         const PREFIX = "Balatro_Vanilla_";
         const originalOpen = indexedDB.open;
         const originalDeleteDatabase = indexedDB.deleteDatabase;
-        
-        // Cache prefixed names for performance
         const prefixCache = new Map();
         
         function getPrefixedName(name) {
@@ -159,7 +150,6 @@
     <script src="love.min.js"></script>
 </head>
 <body>
-    <!-- Loading Screen -->
     <div id="loader">
         <div class="loader-title">BALATRO</div>
         <div class="progress-container">
@@ -168,10 +158,8 @@
         <div id="loader-text">Loading modules...</div>
     </div>
     
-    <!-- Auto-save indicator -->
     <div id="autosave-indicator">💾 Auto-saved</div>
     
-    <!-- Manual save controls (shown after game loads) -->
     <div id="save-controls">
         <button class="save-btn" onclick="saveManager.manualSave()">💾 Save Now</button>
         <button class="save-btn" onclick="saveManager.exportSave()">📤 Export</button>
@@ -181,7 +169,6 @@
     <canvas id="canvas"></canvas>
     
     <script>
-        // Module loading with progress tracking
         const moduleFiles = [
             "module.part1.js",
             "module.part2.js", 
@@ -198,53 +185,39 @@
         const canvas = document.getElementById('canvas');
         
         async function loadModules() {
-            const totalParts = moduleFiles.length;
             const parts = [];
-            
-            for (let i = 0; i < totalParts; i++) {
+            for (let i = 0; i < moduleFiles.length; i++) {
                 try {
-                    loaderText.textContent = `Loading module ${i + 1} of ${totalParts}...`;
+                    loaderText.textContent = `Loading module ${i + 1} of ${moduleFiles.length}...`;
                     const response = await fetch(moduleFiles[i]);
                     if (!response.ok) throw new Error(`Failed to load ${moduleFiles[i]}`);
-                    const text = await response.text();
-                    parts.push(text);
-                    const progress = ((i + 1) / totalParts) * 100;
-                    progressBar.style.width = progress + '%';
+                    parts.push(await response.text());
+                    progressBar.style.width = (((i + 1) / moduleFiles.length) * 100) + '%';
                 } catch (err) {
-                    console.error('Module load error:', err);
-                    loaderText.textContent = `Error loading module ${i + 1}. Retrying...`;
+                    console.error(err);
+                    loaderText.textContent = `Retrying module ${i + 1}...`;
                     i--;
                     await new Promise(r => setTimeout(r, 1000));
                 }
             }
-            
-            loaderText.textContent = 'Initializing game...';
+            loaderText.textContent = 'Initializing...';
             const script = document.createElement('script');
             script.text = parts.join('');
             document.head.appendChild(script);
-            return true;
         }
         
-        // Auto-save Manager
         const saveManager = {
             DB_NAME: 'BalatroSaves',
             STORE_NAME: 'saveData',
-            AUTO_SAVE_INTERVAL: 30000,
             db: null,
             
             async init() {
                 return new Promise((resolve, reject) => {
                     const request = indexedDB.open(this.DB_NAME, 1);
                     request.onerror = () => reject(request.error);
-                    request.onsuccess = () => {
-                        this.db = request.result;
-                        resolve();
-                    };
-                    request.onupgradeneeded = (event) => {
-                        const db = event.target.result;
-                        if (!db.objectStoreNames.contains(this.STORE_NAME)) {
-                            db.createObjectStore(this.STORE_NAME, { keyPath: 'slot' });
-                        }
+                    request.onsuccess = () => { this.db = request.result; resolve(); };
+                    request.onupgradeneeded = (e) => {
+                        e.target.result.createObjectStore(this.STORE_NAME, { keyPath: 'slot' });
                     };
                 });
             },
@@ -252,23 +225,22 @@
             async save(slot = 'auto', data = null) {
                 if (!this.db) return;
                 try {
-                    if (!data && window.Module && window.Module.FS) {
+                    if (!data && window.Module?.FS) {
                         data = await this.captureGameState();
                     }
                     if (!data) return;
                     
-                    const transaction = this.db.transaction([this.STORE_NAME], 'readwrite');
-                    const store = transaction.objectStore(this.STORE_NAME);
-                    const saveData = { slot, data, timestamp: Date.now(), version: '1.0' };
-                    
-                    await new Promise((resolve, reject) => {
-                        const request = store.put(saveData);
-                        request.onsuccess = () => resolve();
-                        request.onerror = () => reject(request.error);
+                    const tx = this.db.transaction([this.STORE_NAME], 'readwrite');
+                    const store = tx.objectStore(this.STORE_NAME);
+                    await new Promise((res, rej) => {
+                        const req = store.put({ slot, data, timestamp: Date.now() });
+                        req.onsuccess = () => res();
+                        req.onerror = () => rej(req.error);
                     });
                     
-                    this.showIndicator();
-                    console.log(`Saved to slot: ${slot}`);
+                    const indicator = document.getElementById('autosave-indicator');
+                    indicator.classList.add('visible');
+                    setTimeout(() => indicator.classList.remove('visible'), 2000);
                 } catch (err) {
                     console.error('Save failed:', err);
                 }
@@ -277,14 +249,14 @@
             async load(slot = 'auto') {
                 if (!this.db) return null;
                 try {
-                    const transaction = this.db.transaction([this.STORE_NAME], 'readonly');
-                    const store = transaction.objectStore(this.STORE_NAME);
-                    const result = await new Promise((resolve, reject) => {
-                        const request = store.get(slot);
-                        request.onsuccess = () => resolve(request.result);
-                        request.onerror = () => reject(request.error);
+                    const tx = this.db.transaction([this.STORE_NAME], 'readonly');
+                    const store = tx.objectStore(this.STORE_NAME);
+                    const result = await new Promise((res, rej) => {
+                        const req = store.get(slot);
+                        req.onsuccess = () => res(req.result);
+                        req.onerror = () => rej(req.error);
                     });
-                    return result ? result.data : null;
+                    return result?.data || null;
                 } catch (err) {
                     console.error('Load failed:', err);
                     return null;
@@ -292,35 +264,29 @@
             },
             
             async captureGameState() {
-                if (window.Module && window.Module.FS) {
-                    try {
-                        const saveDir = '/home/web_user/.local/share/love/game/save';
-                        const files = window.Module.FS.readdir(saveDir);
-                        const saveData = {};
-                        for (const file of files) {
-                            if (file === '.' || file === '..') continue;
-                            const path = saveDir + '/' + file;
-                            const content = window.Module.FS.readFile(path);
-                            saveData[file] = Array.from(content);
-                        }
-                        return saveData;
-                    } catch (e) {
-                        return null;
+                if (!window.Module?.FS) return null;
+                try {
+                    const saveDir = '/home/web_user/.local/share/love/game/save';
+                    const files = window.Module.FS.readdir(saveDir);
+                    const data = {};
+                    for (const file of files) {
+                        if (file === '.' || file === '..') continue;
+                        data[file] = Array.from(window.Module.FS.readFile(saveDir + '/' + file));
                     }
+                    return data;
+                } catch (e) {
+                    return null;
                 }
-                return null;
             },
             
             async restoreGameState(saveData) {
-                if (!window.Module || !window.Module.FS || !saveData) return;
+                if (!window.Module?.FS || !saveData) return;
                 try {
                     const saveDir = '/home/web_user/.local/share/love/game/save';
                     try { window.Module.FS.mkdirTree(saveDir); } catch (e) {}
-                    for (const [filename, content] of Object.entries(saveData)) {
-                        const path = saveDir + '/' + filename;
-                        window.Module.FS.writeFile(path, new Uint8Array(content));
+                    for (const [name, content] of Object.entries(saveData)) {
+                        window.Module.FS.writeFile(saveDir + '/' + name, new Uint8Array(content));
                     }
-                    console.log('Game state restored');
                 } catch (err) {
                     console.error('Restore failed:', err);
                 }
@@ -328,12 +294,12 @@
             
             manualSave() {
                 this.save('manual_' + Date.now());
-                alert('Game saved manually!');
+                alert('Saved!');
             },
             
             async exportSave() {
                 const data = await this.load('auto');
-                if (!data) { alert('No save data found!'); return; }
+                if (!data) return alert('No save data!');
                 const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
@@ -351,26 +317,19 @@
                     const file = e.target.files[0];
                     if (!file) return;
                     try {
-                        const text = await file.text();
-                        const data = JSON.parse(text);
+                        const data = JSON.parse(await file.text());
                         await this.save('auto', data);
                         await this.restoreGameState(data);
-                        alert('Save imported successfully!');
+                        alert('Imported!');
                     } catch (err) {
-                        alert('Failed to import save: ' + err.message);
+                        alert('Import failed: ' + err.message);
                     }
                 };
                 input.click();
             },
             
-            showIndicator() {
-                const indicator = document.getElementById('autosave-indicator');
-                indicator.classList.add('visible');
-                setTimeout(() => indicator.classList.remove('visible'), 2000);
-            },
-            
             startAutoSave() {
-                setInterval(() => this.save('auto'), this.AUTO_SAVE_INTERVAL);
+                setInterval(() => this.save('auto'), 30000);
                 document.addEventListener('visibilitychange', () => {
                     if (document.hidden) this.save('auto');
                 });
@@ -384,36 +343,23 @@
                 await saveManager.init();
                 const d = await getSource();
                 
-                // FIXED: Increased memory and proper allocation
                 window.Module = {
-                    // Use 128MB minimum with growth instead of 64MB
-                    INITIAL_MEMORY: 134217728, // 128MB
+                    INITIAL_MEMORY: 268435456,
                     ALLOW_MEMORY_GROWTH: 1,
-                    TOTAL_STACK: 5242880, // 5MB stack
                     canvas: canvas,
                     printErr: console.error,
                     arguments: ["game.love"],
                     
                     preRun: [function() {
                         Module.addRunDependency("fp game.love");
-                        
-                        // FIXED: Ensure memory is allocated before using getMemory
-                        const needed = d.length;
-                        const ptr = Module._malloc ? Module._malloc(needed) : Module.getMemory(needed);
-                        
-                        if (!ptr) {
-                            throw new Error("Failed to allocate memory for game file");
-                        }
-                        
-                        Module.HEAPU8.set(d, ptr);
                         Module.FS_createDataFile('/', "game.love", d, true, true, true);
                         Module.removeRunDependency("fp game.love");
                     }],
                     
                     postRun: [function() {
-                        if (Module._pendingSaveData) {
-                            setTimeout(() => saveManager.restoreGameState(Module._pendingSaveData), 1000);
-                        }
+                        saveManager.load('auto').then(data => {
+                            if (data) setTimeout(() => saveManager.restoreGameState(data), 500);
+                        });
                         saveManager.startAutoSave();
                         document.getElementById('save-controls').style.display = 'block';
                         loader.classList.add('hidden');
@@ -423,19 +369,18 @@
                 
                 Love(Module);
             } catch (err) {
-                console.error('Initialization failed:', err);
+                console.error(err);
                 loaderText.textContent = 'Error: ' + err.message;
                 loaderText.style.color = '#e94560';
             }
         })();
     </script>
     <script>
-    // Register service worker for caching
-    if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('sw.js')
-            .then(reg => console.log('SW registered:', reg))
-            .catch(err => console.log('SW failed:', err));
-    }
-</script>
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('sw.js')
+                .then(r => console.log('SW registered'))
+                .catch(e => console.log('SW failed:', e));
+        }
+    </script>
 </body>
 </html>
