@@ -1,1 +1,503 @@
-<!DOCTYPE html><html><head><script>const PREFIX = "Balatro_Vanilla_";const originalOpen = indexedDB.open;const originalDeleteDatabase = indexedDB.deleteDatabase;indexedDB.open = function(name, version) {const prefixedName = PREFIX + name;return version !== undefined?originalOpen.call(this, prefixedName, version):originalOpen.call(this, prefixedName);};indexedDB.deleteDatabase = function(name) {const prefixedName = PREFIX + name;return originalDeleteDatabase.call(this, prefixedName);};</script><script src="love.min.js"></script><title>Love.js</title><style>#canvas {position:absolute;top: 0;left: 0;width: 100vw;height: 100vh;}body {width: 100vw;height: 100vh;margin: 0px;}</style></head><body><canvas id="canvas"></canvas><script>(async()=>{const parts=await Promise.all(["module.part1.js","module.part2.js","module.part3.js","module.part4.js","module.part5.js","module.part6.js","module.part7.js"].map(u=>fetch(u).then(r=>r.text())));const s=document.createElement("script");s.text=parts.join("");document.head.appendChild(s);const d=await getSource();Module={INITIAL_MEMORY:2**28,canvas:canvas,printErr:console.error,arguments:["game.love"]};Module.preRun = [function(){Module.addRunDependency("fp game.love");var ptr = Module.getMemory(d.length);Module['HEAPU8'].set(d, ptr);Module.FS_createDataFile('/', "game.love", d, true, true, true);Module.removeRunDependency("fp game.love")}];Love(Module)})()</script></body></html>
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Balatro Web</title>
+    
+    <!-- Preload critical resources -->
+    <link rel="preload" href="love.min.js" as="script">
+    <link rel="preconnect" href="https://1238195329-46.github.io">
+    
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            width: 100vw;
+            height: 100vh;
+            background: #1a1a2e;
+            font-family: system-ui, -apple-system, sans-serif;
+            overflow: hidden;
+        }
+        
+        #canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            display: none;
+        }
+        
+        /* Loading Screen */
+        #loader {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            transition: opacity 0.5s;
+        }
+        
+        #loader.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+        
+        .loader-title {
+            color: #e94560;
+            font-size: 2.5rem;
+            font-weight: bold;
+            margin-bottom: 2rem;
+            text-shadow: 0 0 20px rgba(233, 69, 96, 0.5);
+        }
+        
+        .progress-container {
+            width: 300px;
+            height: 8px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 4px;
+            overflow: hidden;
+            margin-bottom: 1rem;
+        }
+        
+        #progress-bar {
+            width: 0%;
+            height: 100%;
+            background: linear-gradient(90deg, #e94560, #ff6b6b);
+            transition: width 0.3s ease;
+            box-shadow: 0 0 10px rgba(233, 69, 96, 0.5);
+        }
+        
+        #loader-text {
+            color: #eee;
+            font-size: 0.9rem;
+            opacity: 0.8;
+        }
+        
+        /* Auto-save indicator */
+        #autosave-indicator {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            padding: 8px 16px;
+            background: rgba(0,0,0,0.7);
+            color: #4ade80;
+            border-radius: 20px;
+            font-size: 12px;
+            opacity: 0;
+            transition: opacity 0.3s;
+            z-index: 100;
+            pointer-events: none;
+        }
+        
+        #autosave-indicator.visible {
+            opacity: 1;
+        }
+        
+        /* Save/Load buttons */
+        #save-controls {
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            z-index: 100;
+            display: none;
+        }
+        
+        .save-btn {
+            background: rgba(233, 69, 96, 0.8);
+            border: none;
+            color: white;
+            padding: 8px 16px;
+            margin-right: 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: background 0.2s;
+        }
+        
+        .save-btn:hover {
+            background: rgba(233, 69, 96, 1);
+        }
+    </style>
+    
+    <!-- IndexedDB prefixing for isolation -->
+    <script>
+        const PREFIX = "Balatro_Vanilla_";
+        const originalOpen = indexedDB.open;
+        const originalDeleteDatabase = indexedDB.deleteDatabase;
+        
+        // Cache prefixed names for performance
+        const prefixCache = new Map();
+        
+        function getPrefixedName(name) {
+            if (!prefixCache.has(name)) {
+                prefixCache.set(name, PREFIX + name);
+            }
+            return prefixCache.get(name);
+        }
+        
+        indexedDB.open = function(name, version) {
+            const prefixedName = getPrefixedName(name);
+            return version !== undefined 
+                ? originalOpen.call(this, prefixedName, version)
+                : originalOpen.call(this, prefixedName);
+        };
+        
+        indexedDB.deleteDatabase = function(name) {
+            const prefixedName = getPrefixedName(name);
+            return originalDeleteDatabase.call(this, prefixedName);
+        };
+    </script>
+    
+    <script src="love.min.js"></script>
+</head>
+<body>
+    <!-- Loading Screen -->
+    <div id="loader">
+        <div class="loader-title">BALATRO</div>
+        <div class="progress-container">
+            <div id="progress-bar"></div>
+        </div>
+        <div id="loader-text">Loading modules...</div>
+    </div>
+    
+    <!-- Auto-save indicator -->
+    <div id="autosave-indicator">💾 Auto-saved</div>
+    
+    <!-- Manual save controls (shown after game loads) -->
+    <div id="save-controls">
+        <button class="save-btn" onclick="saveManager.manualSave()">💾 Save Now</button>
+        <button class="save-btn" onclick="saveManager.exportSave()">📤 Export</button>
+        <button class="save-btn" onclick="saveManager.importSave()">📥 Import</button>
+    </div>
+    
+    <canvas id="canvas"></canvas>
+    
+    <script>
+        // Module loading with progress tracking
+        const moduleFiles = [
+            "module.part1.js",
+            "module.part2.js", 
+            "module.part3.js",
+            "module.part4.js",
+            "module.part5.js",
+            "module.part6.js",
+            "module.part7.js"
+        ];
+        
+        const progressBar = document.getElementById('progress-bar');
+        const loaderText = document.getElementById('loader-text');
+        const loader = document.getElementById('loader');
+        const canvas = document.getElementById('canvas');
+        
+        async function loadModules() {
+            const totalParts = moduleFiles.length;
+            const parts = [];
+            
+            // Load modules sequentially with progress updates
+            for (let i = 0; i < totalParts; i++) {
+                try {
+                    loaderText.textContent = `Loading module ${i + 1} of ${totalParts}...`;
+                    
+                    const response = await fetch(moduleFiles[i]);
+                    if (!response.ok) throw new Error(`Failed to load ${moduleFiles[i]}`);
+                    
+                    const text = await response.text();
+                    parts.push(text);
+                    
+                    // Update progress
+                    const progress = ((i + 1) / totalParts) * 100;
+                    progressBar.style.width = progress + '%';
+                    
+                } catch (err) {
+                    console.error('Module load error:', err);
+                    loaderText.textContent = `Error loading module ${i + 1}. Retrying...`;
+                    i--; // Retry this module
+                    await new Promise(r => setTimeout(r, 1000));
+                }
+            }
+            
+            // Inject combined modules
+            loaderText.textContent = 'Initializing game...';
+            const script = document.createElement('script');
+            script.text = parts.join('');
+            document.head.appendChild(script);
+            
+            return true;
+        }
+        
+        // Auto-save Manager
+        const saveManager = {
+            DB_NAME: 'BalatroSaves',
+            STORE_NAME: 'saveData',
+            AUTO_SAVE_INTERVAL: 30000, // 30 seconds
+            db: null,
+            
+            async init() {
+                return new Promise((resolve, reject) => {
+                    const request = indexedDB.open(this.DB_NAME, 1);
+                    
+                    request.onerror = () => reject(request.error);
+                    request.onsuccess = () => {
+                        this.db = request.result;
+                        resolve();
+                    };
+                    
+                    request.onupgradeneeded = (event) => {
+                        const db = event.target.result;
+                        if (!db.objectStoreNames.contains(this.STORE_NAME)) {
+                            db.createObjectStore(this.STORE_NAME, { keyPath: 'slot' });
+                        }
+                    };
+                });
+            },
+            
+            async save(slot = 'auto', data = null) {
+                if (!this.db) return;
+                
+                try {
+                    // If no data provided, try to get from game
+                    if (!data && window.Love && window.Love.filesystem) {
+                        data = await this.captureGameState();
+                    }
+                    
+                    if (!data) return; // Nothing to save
+                    
+                    const transaction = this.db.transaction([this.STORE_NAME], 'readwrite');
+                    const store = transaction.objectStore(this.STORE_NAME);
+                    
+                    const saveData = {
+                        slot: slot,
+                        data: data,
+                        timestamp: Date.now(),
+                        version: '1.0'
+                    };
+                    
+                    await new Promise((resolve, reject) => {
+                        const request = store.put(saveData);
+                        request.onsuccess = () => resolve();
+                        request.onerror = () => reject(request.error);
+                    });
+                    
+                    this.showIndicator();
+                    console.log(`Saved to slot: ${slot}`);
+                    
+                } catch (err) {
+                    console.error('Save failed:', err);
+                }
+            },
+            
+            async load(slot = 'auto') {
+                if (!this.db) return null;
+                
+                try {
+                    const transaction = this.db.transaction([this.STORE_NAME], 'readonly');
+                    const store = transaction.objectStore(this.STORE_NAME);
+                    
+                    const result = await new Promise((resolve, reject) => {
+                        const request = store.get(slot);
+                        request.onsuccess = () => resolve(request.result);
+                        request.onerror = () => reject(request.error);
+                    });
+                    
+                    return result ? result.data : null;
+                    
+                } catch (err) {
+                    console.error('Load failed:', err);
+                    return null;
+                }
+            },
+            
+            async captureGameState() {
+                // Hook into LÖVE filesystem if available
+                if (window.Module && window.Module.FS) {
+                    try {
+                        // Read save directory from virtual FS
+                        const saveDir = '/home/web_user/.local/share/love/game/save';
+                        const files = window.Module.FS.readdir(saveDir);
+                        const saveData = {};
+                        
+                        for (const file of files) {
+                            if (file === '.' || file === '..') continue;
+                            const path = saveDir + '/' + file;
+                            const content = window.Module.FS.readFile(path);
+                            saveData[file] = Array.from(content);
+                        }
+                        
+                        return saveData;
+                    } catch (e) {
+                        // Directory might not exist yet
+                        return null;
+                    }
+                }
+                return null;
+            },
+            
+            async restoreGameState(saveData) {
+                if (!window.Module || !window.Module.FS || !saveData) return;
+                
+                try {
+                    const saveDir = '/home/web_user/.local/share/love/game/save';
+                    
+                    // Create directory if needed
+                    try {
+                        window.Module.FS.mkdirTree(saveDir);
+                    } catch (e) { /* exists */ }
+                    
+                    // Write each file
+                    for (const [filename, content] of Object.entries(saveData)) {
+                        const path = saveDir + '/' + filename;
+                        window.Module.FS.writeFile(path, new Uint8Array(content));
+                    }
+                    
+                    console.log('Game state restored');
+                } catch (err) {
+                    console.error('Restore failed:', err);
+                }
+            },
+            
+            manualSave() {
+                this.save('manual_' + Date.now());
+                alert('Game saved manually!');
+            },
+            
+            async exportSave() {
+                const data = await this.load('auto');
+                if (!data) {
+                    alert('No save data found!');
+                    return;
+                }
+                
+                const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `balatro-save-${new Date().toISOString().slice(0,10)}.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+            },
+            
+            importSave() {
+                const input = document.createElement('input');
+                input.type = 'file';
+                input.accept = '.json';
+                input.onchange = async (e) => {
+                    const file = e.target.files[0];
+                    if (!file) return;
+                    
+                    try {
+                        const text = await file.text();
+                        const data = JSON.parse(text);
+                        await this.save('auto', data);
+                        await this.restoreGameState(data);
+                        alert('Save imported successfully!');
+                    } catch (err) {
+                        alert('Failed to import save: ' + err.message);
+                    }
+                };
+                input.click();
+            },
+            
+            showIndicator() {
+                const indicator = document.getElementById('autosave-indicator');
+                indicator.classList.add('visible');
+                setTimeout(() => indicator.classList.remove('visible'), 2000);
+            },
+            
+            startAutoSave() {
+                // Auto-save every 30 seconds
+                setInterval(() => {
+                    this.save('auto');
+                }, this.AUTO_SAVE_INTERVAL);
+                
+                // Also save on page hide (switching tabs, closing)
+                document.addEventListener('visibilitychange', () => {
+                    if (document.hidden) {
+                        this.save('auto');
+                    }
+                });
+                
+                // Save before unload
+                window.addEventListener('beforeunload', () => {
+                    this.save('auto');
+                });
+            }
+        };
+        
+        // Initialize everything
+        (async () => {
+            try {
+                // Load modules
+                await loadModules();
+                
+                // Initialize save system
+                await saveManager.init();
+                
+                // Get game data
+                const d = await getSource();
+                
+                // Configure Module with optimized settings
+                window.Module = {
+                    INITIAL_MEMORY: 2**26, // 64MB instead of 256MB
+                    ALLOW_MEMORY_GROWTH: 1,
+                    TOTAL_STACK: 2**20, // 1MB stack
+                    canvas: canvas,
+                    printErr: console.error,
+                    arguments: ["game.love"],
+                    
+                    preRun: [function() {
+                        Module.addRunDependency("fp game.love");
+                        
+                        // Restore saved data if exists
+                        saveManager.load('auto').then(saveData => {
+                            if (saveData) {
+                                console.log('Found existing save, will restore after init');
+                                Module._pendingSaveData = saveData;
+                            }
+                        });
+                        
+                        var ptr = Module.getMemory(d.length);
+                        Module.HEAPU8.set(d, ptr);
+                        Module.FS_createDataFile('/', "game.love", d, true, true, true);
+                        Module.removeRunDependency("fp game.love");
+                    }],
+                    
+                    postRun: [function() {
+                        // Restore save data after game init
+                        if (Module._pendingSaveData) {
+                            setTimeout(() => {
+                                saveManager.restoreGameState(Module._pendingSaveData);
+                            }, 1000);
+                        }
+                        
+                        // Start auto-save
+                        saveManager.startAutoSave();
+                        
+                        // Show save controls
+                        document.getElementById('save-controls').style.display = 'block';
+                        
+                        // Hide loader
+                        loader.classList.add('hidden');
+                        canvas.style.display = 'block';
+                    }]
+                };
+                
+                // Start LÖVE
+                Love(Module);
+                
+            } catch (err) {
+                console.error('Initialization failed:', err);
+                loaderText.textContent = 'Error: ' + err.message;
+                loaderText.style.color = '#e94560';
+            }
+        })();
+    </script>
+</body>
+</html>
